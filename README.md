@@ -2,7 +2,172 @@
 
 Go + MCP + crash 的离线 Linux 内核崩溃分析工具。
 
+coresugar 为现有 Codex、Claude Code 等 AI Agent 提供调试工具。Agent 负责选择命令、分析证据和撰写报告；coresugar 负责控制 crash、访问源码和保存证据，无需单独配置模型 API Key。
+
 开发方案见 [design.md](design.md)，实施顺序见 [development-plan.md](development-plan.md)。
+
+## 快速开始：Agent 与资料在同一台 Linux
+
+### 1. 安装并编译
+
+准备 Go 1.23 以上版本，以及能够加载目标内核的 crash。执行：
+
+```bash
+git clone https://github.com/alahaiyo/coresugar.git
+cd coresugar
+go build -o bin/coresugar ./cmd/coresugar
+```
+
+后续在这个项目目录操作。用 `pwd` 获取项目绝对路径，配置 Agent 时替换下面的 `/home/yourname/coresugar`。
+
+### 2. 校验已有资料
+
+假设文件已经位于：
+
+```text
+/data/case-001/vmcore
+/data/case-001/vmlinux
+/data/case-001/linux-source/
+```
+
+这些是示例路径，替换成自己的实际路径即可，不需要移动或重复复制 vmcore。
+运行账户需要能读取这些文件；当前 vmlinux 必须内含 DWARF 调试信息。
+
+```bash
+./bin/coresugar check --directory /data/case-001
+
+./bin/coresugar validate \
+  --vmcore /data/case-001/vmcore \
+  --vmlinux /data/case-001/vmlinux \
+  --source-dir /data/case-001/linux-source
+```
+
+`PARTIAL` 表示基础检查通过，部分匹配关系尚未确认；`MISMATCH`、`INVALID` 必须先解决。
+相同内核 release 不一定来自同一次构建，编译时间不同也会被拒绝。
+
+### 3. 创建服务配置
+
+在项目目录创建 `config.json`：
+
+```json
+{
+  "crash": "/usr/bin/crash",
+  "allowed_roots": ["/data/case-001"],
+  "evidence_dir": "/data/case-001/evidence",
+  "command_timeout_ms": 120000
+}
+```
+
+其余字段使用默认值，完整配置见 [config.example.json](configs/config.example.json)。
+资料分散在不同目录时，将相应目录都加入 allowed_roots；evidence_dir 必须可写。
+配置不会绑定某一份 vmcore，实际输入路径由 Agent 调用 open_dump 时传入。
+
+### 4. 接入 Codex 或 Claude Code
+
+任选所用客户端配置。MCP 使用 stdio，由 Agent 自动启动 `coresugar serve`，无需提前运行常驻服务或开放 HTTP 端口。
+
+**Codex**
+
+在现有 `~/.codex/config.toml` 中添加以下条目；如果已存在 coresugar 条目，修改原条目，避免重复定义：
+
+```toml
+[mcp_servers.coresugar]
+command = "/home/yourname/coresugar/bin/coresugar"
+args = ["serve", "--config", "/home/yourname/coresugar/config.json"]
+startup_timeout_sec = 30
+tool_timeout_sec = 180
+```
+
+工具超时设置为 180 秒，给最多 120 秒的 vmcore 初始化和命令执行留出余量。
+配置后启动新会话，在 `/mcp` 中确认服务和工具可用。
+配置字段见 [OpenAI 官方 MCP 文档](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)。
+
+**Claude Code**
+
+```bash
+claude mcp add --transport stdio --scope user coresugar -- \
+  /home/yourname/coresugar/bin/coresugar serve \
+  --config /home/yourname/coresugar/config.json
+
+claude mcp list
+```
+
+配置后启动新的 Claude Code 会话，用 `/mcp` 检查连接。
+如果自己设置了客户端工具超时，应给初始化预留至少 120 秒。
+命令格式见 [Claude Code 官方 MCP 文档](https://code.claude.com/docs/en/mcp)。
+
+### 5. 让 Agent 开始分析
+
+在项目目录启动 Agent，发送下面的提示，替换实际输入路径：
+
+```text
+请先读取 skills/coresugar-analysis/SKILL.md，
+通过 coresugar MCP 工具分析下面的内核崩溃：
+
+vmcore：/data/case-001/vmcore
+vmlinux：/data/case-001/vmlinux
+源码目录：/data/case-001/linux-source
+
+先核对输入，再分析日志、异常调用栈、寄存器、故障指令和相关源码。
+关键结论必须引用实际 evidence_id，区分直接原因、根因判断和未确认的信息。
+最终将报告写入 analysis-report.md，并关闭调试会话。
+```
+
+首次使用可以先要求 Agent 只完成 `open_dump → crash_exec("sys") → close_dump`。
+确认界面中出现真实工具调用和返回值后，再执行完整分析。
+可用的七个 Tool 及输出限制见下方说明。
+
+## 远程使用：Agent 在本机，资料在 Linux 服务器
+
+先在 Linux 服务器完成上述第 1～3 步。假设服务程序和配置位于 `/home/debug/coresugar`，SSH 目标为 `debug@debug-server`。
+所有路径均替换成实际值，先确认非交互 SSH 可用：
+
+```bash
+ssh -T -o BatchMode=yes debug@debug-server \
+  /home/debug/coresugar/bin/coresugar check --directory /data/case-001
+```
+
+**本机 Codex** 的 MCP 条目改为：
+
+```toml
+[mcp_servers.coresugar]
+command = "ssh"
+args = [
+  "-T", "-o", "BatchMode=yes", "debug@debug-server",
+  "/home/debug/coresugar/bin/coresugar", "serve",
+  "--config", "/home/debug/coresugar/config.json"
+]
+startup_timeout_sec = 30
+tool_timeout_sec = 180
+```
+
+**本机 Claude Code** 注册 SSH 启动命令：
+
+```bash
+claude mcp add --transport stdio --scope user coresugar -- \
+  ssh -T -o BatchMode=yes debug@debug-server \
+  /home/debug/coresugar/bin/coresugar serve \
+  --config /home/debug/coresugar/config.json
+```
+
+上述远程配置用于替换同名的本地配置，不要重复注册同名服务。
+SSH 登录脚本不得向 stdout 输出欢迎信息等内容，以免混入 MCP 协议。
+
+分析说明也需要放在本机 Agent 能读取的位置。例如，在本机工作目录执行：
+
+```bash
+scp debug@debug-server:/home/debug/coresugar/skills/coresugar-analysis/SKILL.md \
+  ./coresugar-analysis.md
+```
+
+提示 Agent 先读取 `./coresugar-analysis.md`，再按前面的分析提示操作。
+输入文件路径始终使用 Linux 服务器上的路径，报告可写入 Agent 的本机工作目录；vmcore 无需传到本机，Agent 获取的是调试命令输出。
+
+## 当前验证范围
+
+已验证真实 Linux 资料、七个 MCP Tool、SSH 调用、证据保存和会话生命周期。
+已有分析报告由 Codex 会话读取测试客户端获取的证据并撰写。
+独立 Codex/Claude Code 直接接入 MCP、自主完成多轮分析的端到端验收，以及五个已知原因案例评测仍待完成。
 
 ## 编译与测试
 
@@ -19,7 +184,7 @@ GOOS=linux GOARCH=amd64 go build -o bin/coresugar-linux-amd64 ./cmd/coresugar
 在 Linux 上执行：
 
 ```bash
-./coresugar check --crash /usr/bin/crash --directory /data/coresugar
+./bin/coresugar check --crash /usr/bin/crash --directory /data/coresugar
 ```
 
 返回 JSON；退出码 0 表示检查通过，1 表示环境不可用，2 表示参数错误。
@@ -28,7 +193,7 @@ macOS 可用于开发和单元测试，crash 的环境检查与实际运行需�
 ## 输入验证
 
 ```bash
-./coresugar validate \
+./bin/coresugar validate \
   --vmcore /path/to/vmcore \
   --vmlinux /path/to/vmlinux \
   --source-dir /path/to/linux-source
@@ -41,7 +206,7 @@ macOS 可用于开发和单元测试，crash 的环境检查与实际运行需�
 ## 命令行调试
 
 ```bash
-./coresugar debug \
+./bin/coresugar debug \
   --vmcore /path/to/vmcore \
   --vmlinux /path/to/vmlinux \
   --source-dir /path/to/linux-source \
@@ -58,7 +223,7 @@ macOS 可用于开发和单元测试，crash 的环境检查与实际运行需�
 ## MCP 服务
 
 ```bash
-./coresugar serve --config /path/to/config.json
+./bin/coresugar serve --config /path/to/config.json
 ```
 
 配置参考 [config.example.json](configs/config.example.json)，使用 JSON，不需要 YAML 依赖。
