@@ -1,0 +1,11 @@
+{
+  "host": "kernel-debug@linux-test.example.test",
+  "architecture": "amd64",
+  "crash": "/usr/bin/crash",
+  "directory": "/data/coresugar",
+  "vmcore": "/data/coresugar/case-001/vmcore",
+  "vmlinux": "/data/coresugar/case-001/vmlinux",
+  "source_dir": "/data/coresugar/case-001/linux-source",
+  "expected_status": "PARTIAL",
+  "analysis_path": "block"
+}

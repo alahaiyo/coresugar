@@ -1,0 +1,13 @@
+{
+  "crash": "/usr/bin/crash",
+  "allowed_roots": ["/data/coresugar"],
+  "evidence_dir": "/data/coresugar-evidence",
+  "max_sessions": 2,
+  "idle_timeout_ms": 1800000,
+  "startup_timeout_ms": 120000,
+  "command_timeout_ms": 30000,
+  "max_command_timeout_ms": 120000,
+  "max_response_bytes": 65536,
+  "max_capture_bytes": 16777216,
+  "source_mappings": {}
+}

@@ -1,0 +1,6 @@
+/bin/
+/coresugar
+/tests/integration/environment.local.json
+/*.local.md
+/docs/test-results/
+/evidence/

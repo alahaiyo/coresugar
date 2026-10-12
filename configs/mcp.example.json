@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "coresugar": {
+      "command": "ssh",
+      "args": [
+        "-T",
+        "-o",
+        "BatchMode=yes",
+        "kernel-debug@linux-test.example.test",
+        "/opt/coresugar/bin/coresugar",
+        "serve",
+        "--config",
+        "/opt/coresugar/config.json"
+      ]
+    }
+  }
+}
