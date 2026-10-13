@@ -19,24 +19,120 @@ description: 使用 coresugar MCP 分析离线 Linux vmcore，核对异常现场
 
 从 `sys`、`log`、`bt` 获取现场，先找到异常任务、CPU、指令地址和异常寄存器，再根据现有证据选择下一条命令。
 
-支持的主要命令形式：
+### 可用的 crash 能力
+
+先用 `help` 查看安装版本的命令列表，按需用 `help kmem`、`help list` 等读取真实帮助。
+参数范围参考 [crash 官方帮助](https://crash-utility.github.io/help.html)，
+调用前仍需确认当前版本的语义。
+服务端开放以下 43 个命令入口；本机 crash 版本、架构和内核配置仍会影响实际可用性。
+`help` 显示的是 crash 的完整能力，不代表其中每个命令或参数都获准执行。
+下面单字母选项可组合，例如 `bt -fl`、`rd -px`；带值选项必须单独写成 `-c 0-3`，
+不能合并成 `-c0-3` 或 `-fc 0-3`。未列出的选项不开放。
+
+| 命令 | 允许形式与选项 |
+|---|---|
+| `help` | 无参数，或一个已开放命令名、`all`、`input`、`output`；也支持 `-r -D -n -o -z` 中一个 |
+| `sys` | `-t -i`，`config`，`-c [系统调用名或编号]` |
+| `log` | `-T -t -d -m -a -s -c -R` |
+| `bt` | `-a -A -g -r -t -T -l -e -E -f -F -FF -o -v -p -s -x -d`；`-c CPU列表 -R 引用 -I 指令地址 -S 栈地址 -n idle`；可指定任务 |
+| `ps` | `-k -u -G -I -s -p -t -c -l -m -a -g -r -S -A -H -Y`；`-C CPU列表 -y 调度策略`；可指定 PID、任务地址或名称 |
+| `kmem` | `-f -F -c -C -i -i=shared -v -V -n -z -o -h -p -s -S -r -g -P`；`-m 成员列表 -I 缓存列表 -S=CPU列表`；按需指定 slab 缓存、地址或 page flags |
+| `dis` | `-r -f -l -u -d -x`；符号或地址，可加指令数量；`-b [数字]` 查看或设置 BUG 指令跳过字节数 |
+| `sym` | 符号或地址；`-l -M -p -n -m 模块 -q 子串` |
+| `whatis` | 类型或符号；`-o -r 大小或范围 -m 成员类型` |
+| `p` | `-x -d -u`；符号、成员、数组、取地址、解引用、指针类型转换、`sizeof(类型)`、每 CPU 符号；只接受下文的受限数据引用 |
+| `struct` / `union` | 类型或类型.成员列表，可加地址和数量；`-o -r -f -u -x -d -p -l 偏移 -c 数量`；支持嵌套成员、数组和每 CPU 地址 |
+| `rd` | `-a -d -D -s -S -SS -u -p -x -m -f -N -R -8 -16 -32 -64 -o 偏移`；地址或符号，可加数量 |
+| `task` | `-d -x -R 成员列表`；可指定任务 |
+| `vm` | `-p -v -m -x -d -P VMA地址 -M mm地址 -R 引用 -f vm_flags`；可指定任务 |
+| `vtop` | `-u -k -c 任务`；一个或多个虚拟地址 |
+| `ptov` | 物理地址，或每 CPU 偏移，如 `b0c0:all` |
+| `btop` / `ptob` / `pte` | 一个或多个地址、页号或页表项值 |
+| `swap` | 无参数 |
+| `runq` | `-t -T -m -g -c CPU列表` |
+| `timer` | `-r -C CPU列表` |
+| `waitq` | 符号、地址，或 `类型.等待队列成员 结构体地址` |
+| `irq` | `-u -d -b -a -s -c CPU列表`；可指定 IRQ 编号 |
+| `mach` | `-m -c -x -d -o` |
+| `dev` | `-i -p -d -D -V` |
+| `files` | `-c -d dentry地址 -p inode地址 -n inode地址 -R 引用`；可指定任务 |
+| `fuser` | 转储中一个文件路径或 inode 地址 |
+| `mount` | `-f -i -n 任务`；可指定转储中的挂载路径、设备或相关对象地址 |
+| `net` | `-s -S -x -d -a -n -R 引用 -N 地址`；可指定任务 |
+| `sig` | `-l -g -s 信号掩码`；可指定任务 |
+| `ipcs` | `-s -m -M -q -n 任务`；可指定资源 ID 或地址 |
+| `bpf` | `-P -M -t -T -j -s -x -d -p 程序ID -m 映射ID` |
+| `list` | `-r -B -h -H -x -d -o 偏移 -e 结束地址 -s 类型.成员 -S 类型.成员 -l 偏移 -O 头偏移`；起始地址，可带位置形式的偏移 |
+| `tree` | `-l -p -v -N -x -d -t 树类型 -r 根偏移 -o 节点偏移 -s 类型.成员 -S 类型.成员`；起始地址；树类型包括 `rbtree radix xarray maple` |
+| `sbitmapq` | `-p -v -x -d -s 类型.成员 -a 数组地址`；队列地址 |
+| `search` | `-k -K -V -u -p -t -T -c -w -h -s 起始地址 -e 结束地址 -l 字节数 -m 掩码 -x 上下文数量`；查找值、符号或无空格字符串 |
+| `ascii` | 无参数或一个数值 |
+| `eval` | `-b -l`；单值或单个二元计算，例如 `(0x40 & 0x20)`；支持 `+ - * / % & ^`，括号内还支持 `| << >>`；支持数值前的 `~` |
+| `set` | 无参数查看上下文；`PID或任务地址`、`-c CPU编号`、`-p` 切换上下文；`-v` 查看调试器设置 |
+| `mod` | 无参数列模块，`-t` 查看污染标记；`-s 模块名 符号文件绝对路径` 加载模块符号 |
+| `foreach` | 按 PID、任务地址、名称、状态或 `kernel user gleader active` 选择任务；每次只执行一个下表中的子命令 |
+
+`foreach` 使用自己的参数规则，不继承普通命令的所有参数：
+
+| 子命令 | 支持选项 |
+|---|---|
+| `bt` | `-r -t -l -e -f -F -FF -o -s -x -d -R 引用` |
+| `vm` | `-p -v -m -x -d -R 引用` |
+| `task` | `-x -d -R 成员列表` |
+| `files` | `-c -R 引用` |
+| `net` | `-s -S -x -d -R 引用` |
+| `ps` | `-G -s -p -t -c -l -m -a -g -r -y 调度策略` |
+| `sig` | `-g` |
+| `vtop` | `-c -u -k 地址`，这里的 `-c` 不带任务参数 |
+
+数据引用示例：
 
 ```text
-sys
-log
-bt [-a|-f|-l|-p] [任务或地址]
-ps [-m|-p|-l]
-kmem -i
-dis [-l|-r|-f] 符号或地址 [数量]
-sym 符号或地址
-whatis 类型
-p 符号
-struct 类型 地址
-rd [-x|-d|-u] 地址 数量
+p -x init_task.mm->pgd
+p linux_banner[0]
+p &init_task
+p *(struct task_struct *)0xffff985da3dbdd00
+p ((struct task_struct *)0xffff985da3dbdd00)->pid
+p sizeof(struct task_struct)
+p runqueues:0-3
+struct task_struct.pid,comm -x ffff985da3dbdd00
+struct -l task_struct.tasks task_struct ffff985da3dbdd00
+struct rq runqueues:all
 ```
 
-不要使用 shell、脚本、任意 GDB 表达式或函数调用。`rd` 和 `dis` 数量最多 256，先用小范围查询。
-完整任务表和所有 CPU 栈可能非常大，优先针对故障现场查询。命令允许的形式以实际返回为准。
+`p` 不支持任意 C/GDB 表达式、函数调用、赋值或 GDB `$` 变量；数值运算用 `eval`，
+复杂地址计算可先在 Agent 侧完成，再用 `struct` 或 `rd` 读取。`eval` 的移位和 `|` 必须放在一对完整括号内，例如 `eval (0x40 >> 2)`。
+`sizeof` 支持单个类型名、`struct/union 类型名` 及其指针形式；不支持任意类型表达式。
+`rd`、`dis` 的显式数量为 1～256；结构体数组数量为 1～256，负数量必须用 `-c -数量`，可读取地址之前的对象。
+`rd -a` 应明确指定数量；不开放 `rd -e`，用分段读取控制范围。
+任务和多地址参数最多 64 个。CPU 列表支持 `0,2-4`，每 CPU 后缀还支持 `:a`、`:all`。
+输入不支持引号、正则任务筛选、任意脚本、外部 shell、文件重定向、`wr`、`extend` 或任意 GDB。
+`dis -s` 不开放；源码通过 `read_source`、`search_source` 的目录约束读取。
+`dev -v`、`rd -r` 的文件输出形式不开放。
+
+模块符号必须使用明确路径，例如 `mod -s nvme /data/case-001/modules/nvme.ko`。
+服务端检查文件是 `allowed_roots` 内的普通文件，并将符号链接解析为真实路径。
+没有开放 `mod -S` 自动目录搜索和批量加载；多个模块逐个用 `mod -s` 加载。
+加载成功不等于符号身份已确认，必须核对用户提供的构建资料；不得把宿主机的同名模块当作匹配符号。
+`set` 和模块符号加载改变调试器状态，不修改 vmcore；记录当前上下文，避免把不同任务的结果混用。
+
+### 深入调查的选择
+
+根据证据选择调查方向，不需要把所有命令跑一遍：
+
+- 空指针或非法地址：`bt -f`、`dis`、`struct`/`p` 核对参数、对象与字段；用 `kmem 地址`、`vtop`、`pte` 检查地址归属和映射，再查源码中的初始化与使用路径。
+- 释放后使用或内存破坏：`kmem -s/-S 地址` 查看对象所属缓存及使用状态，读取对象、相邻内存与引用它的链表；`search` 先限定起始地址和长度。对象显示空闲是线索，需结合故障指令和字段验证，不能单独证明是谁释放或写坏。
+- OOM 或内存压力：`kmem -i/-V/-z/-f/-s`、`ps`、`vm` 检查内存分布、缓存、进程与映射；按需检查 `page`、NUMA、swap 和源码。
+- 卡死或锁等待：`ps -m`、`foreach UN bt`、`bt -a` 找阻塞任务及 CPU；用 `waitq`、`struct` 和 `list` 查等待者、锁对象和可能的持有者，再用 `runq`、`timer`、`irq` 核对调度与中断。等待同一对象不自动证明死锁。
+- 文件系统或 I/O：`files`、`mount`、`fuser`、`dev -d/-D` 查关联文件、inode、设备与未完成请求；用 `list`、`tree`、`sbitmapq` 追踪队列和对象。
+- 网络或 BPF：`net -s/-S` 查 socket 与任务，`struct` 核对协议对象，`bpf` 查看程序和映射；需要时核对模块符号。
+- 调用栈损坏或栈溢出：`bt -e/-E/-t/-T/-v`、`rd -S` 和 `sym` 交叉检查异常帧、候选返回地址与栈内容；说明候选地址可能是残留数据。
+
+完整任务表、所有 CPU 栈、slab 对象和全内存搜索可能产生巨大输出。
+优先查询具体任务、CPU、缓存和地址，`foreach` 先筛选任务，`search` 优先指定 `-s` 与 `-l`。
+遍历损坏的链表或树可能超时；遇到错误先检查证据与会话状态，不反复执行同一个大范围查询。
+实际参数的语义以安装版本的帮助和返回为准；某参数被拒绝时使用上述开放形式，
+不要改用 shell、GDB 或脚本绕过限制。命令不可用是工具或资料限制，不是内核对象不存在的证明。
 
 `crash_exec` 默认命令超时 30 秒，客户端不能超过服务端配置的上限。超时或采集超限会关闭会话；重新打开后缩小调查范围，不假定原会话已经恢复。
 

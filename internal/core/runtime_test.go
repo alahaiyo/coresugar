@@ -125,6 +125,49 @@ func TestRuntimeExec(t *testing.T) {
 	}
 }
 
+// TestRuntimeModuleSymbols 验证模块符号仅从允许目录的明确普通文件加载，
+// 命令输出有持久证据；目录外文件、越界符号链接、目录及不存在文件在执行前拒绝，
+// 合法符号链接转换为真实路径，拒绝请求后会话仍然可用。
+func TestRuntimeModuleSymbols(t *testing.T) {
+	runtime := testRuntime(t)
+	if runtime == nil {
+		return
+	}
+	id := attachDebugger(t, runtime, "normal", "cs-module-symbols")
+	if id == "" {
+		return
+	}
+	inside := filepath.Join(runtime.config.AllowedRoots[0], "nvme.ko")
+	outside := filepath.Join(t.TempDir(), "nvme.ko")
+	writeFixture(t, inside, []byte("module fixture"))
+	writeFixture(t, outside, []byte("outside fixture"))
+	insideLink := filepath.Join(runtime.config.AllowedRoots[0], "nvme-linked.ko")
+	outsideLink := filepath.Join(runtime.config.AllowedRoots[0], "nvme-outside.ko")
+	for link, target := range map[string]string{insideLink: inside, outsideLink: outside} {
+		if err := os.Symlink(target, link); err != nil {
+			t.Errorf("create link: %v", err)
+			return
+		}
+	}
+	for _, path := range []string{inside, insideLink} {
+		result, err := runtime.Exec(context.Background(), ExecRequest{SessionID: id, Command: "mod -s nvme " + path})
+		if err != nil || result.Status != "SUCCESS" || result.EvidenceID == "" {
+			t.Errorf("load symbols: %+v, %v", result, err)
+		}
+		if result.Command != "mod -s nvme "+inside {
+			t.Errorf("symbol path not resolved: %s", result.Command)
+		}
+	}
+	for _, path := range []string{outside, outsideLink, runtime.config.AllowedRoots[0], filepath.Join(runtime.config.AllowedRoots[0], "unavailable-nvme.ko")} {
+		if _, err := runtime.Exec(context.Background(), ExecRequest{SessionID: id, Command: "mod -s nvme " + path}); err == nil {
+			t.Errorf("invalid symbols accepted: %s", path)
+		}
+	}
+	if info, err := runtime.Get(id); err != nil || info.Status != "READY" {
+		t.Errorf("rejection damaged session: %+v, %v", info, err)
+	}
+}
+
 // TestRuntimeConcurrentClose 验证执行中查询返回 BUSY、同会话并发被拒绝，关闭会话中断执行且状态保持 CLOSED。
 func TestRuntimeConcurrentClose(t *testing.T) {
 	runtime := testRuntime(t)

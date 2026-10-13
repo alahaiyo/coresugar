@@ -18,7 +18,7 @@ func New(runtime *core.Runtime) *mcp.Server {
 		result, err := runtime.Open(ctx, input)
 		return nil, result, err
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "crash_exec", Description: "Execute an allowed read-only crash command with bounded time and output."}, func(ctx context.Context, _ *mcp.CallToolRequest, input core.ExecRequest) (*mcp.CallToolResult, core.ExecResult, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "crash_exec", Description: "Investigate a vmcore with bounded crash commands: sys/log/bt/ps; kmem/rd/search/vm/vtop/pte; struct/union/p/whatis/list/tree/sbitmapq; runq/timer/waitq/irq; files/fuser/mount/net/sig/ipcs/dev/mach/bpf; sym/mod; conversions/eval/ascii. Use help <command> for installed-version syntax and skills/coresugar-analysis/SKILL.md for permitted forms. Supports foreach with bt/vm/task/files/net/ps/sig/vtop, set of task/CPU context, and mod -s <module> <absolute-symbol-file> under allowed_roots. Never writes dump memory or host output files; rejects shell, scripts, arbitrary GDB and extensions. Each execution returns persisted evidence."}, func(ctx context.Context, _ *mcp.CallToolRequest, input core.ExecRequest) (*mcp.CallToolResult, core.ExecResult, error) {
 		result, err := runtime.Exec(ctx, input)
 		if err != nil {
 			return nil, result, err

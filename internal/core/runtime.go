@@ -242,6 +242,27 @@ func (runtime *Runtime) Exec(ctx context.Context, request ExecRequest) (ExecResu
 	if err := ValidateCommand(request.Command); err != nil {
 		return ExecResult{}, err
 	}
+	// Module loading must use an explicit symbol file under allowed_roots;
+	// never let crash search arbitrary host directories for a matching module.
+	fields := strings.Fields(request.Command)
+	if fields[0] == "mod" && len(fields) == 4 {
+		path, err := filepath.EvalSymlinks(fields[3])
+		if err != nil {
+			return ExecResult{}, fmt.Errorf("ARTIFACT_NOT_FOUND: %w", err)
+		}
+		if err := runtime.pathAllowed(path); err != nil {
+			return ExecResult{}, err
+		}
+		info, err := os.Stat(path)
+		if err != nil || !info.Mode().IsRegular() {
+			return ExecResult{}, fmt.Errorf("INVALID_ARGUMENT: module symbols must be a regular file")
+		}
+		fields[3] = path
+		request.Command = strings.Join(fields, " ")
+		if err := ValidateCommand(request.Command); err != nil {
+			return ExecResult{}, err
+		}
+	}
 	timeout := request.TimeoutMS
 	if timeout == 0 {
 		timeout = runtime.config.CommandTimeoutMS

@@ -168,6 +168,8 @@ scp debug@debug-server:/home/debug/coresugar/skills/coresugar-analysis/SKILL.md 
 ## 当前验证范围
 
 已验证真实 Linux 资料、八个 MCP Tool、SSH 调用、证据保存、调查总结和会话生命周期。
+新增命令范围已进行参数校验与受控进程测试，尚未逐项完成真实 vmcore 验证；
+实际命令和选项支持情况取决于安装的 crash 版本、目标架构与内核。
 已有分析报告由 Codex 会话读取测试客户端获取的证据并撰写。
 独立 Codex/Claude Code 直接接入 MCP、自主完成多轮分析的端到端验收，以及五个已知原因案例评测仍待完成。
 
@@ -219,7 +221,12 @@ macOS 可用于开发和单元测试，crash 的环境检查与实际运行需�
 默认响应上限 64 KiB，采集上限 16 MiB，可通过 `--max-output-bytes`、`--max-capture-bytes` 降低。
 超时或采集超限关闭会话；普通 crash 命令错误和命令拒绝不损坏会话。
 
-支持 sys、log、bt、ps、kmem -i、dis、sym、whatis、p、struct、rd 的受限只读形式。
+开放 43 个 crash 命令入口，涵盖内存/slab/页表、任务与调度、等待队列、IRQ、
+文件系统、网络、BPF、链表和树等调查；支持受限 `foreach`、每 CPU 数据、
+结构体成员与数组、上下文切换以及明确路径的模块符号加载。
+`help 命令名` 可查询安装版本的帮助；只允许分析 Skill 列出的参数。
+上下文和符号加载只改变调试器状态，不修改 vmcore；shell、脚本、任意 GDB、
+插件加载和文件写入仍被拒绝。
 具体参数范围见 [分析 Skill](skills/coresugar-analysis/SKILL.md)。
 
 ## MCP 服务
