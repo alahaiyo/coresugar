@@ -59,7 +59,10 @@ func (runtime *Runtime) prepareEvidence(info SessionInfo, startup string) error 
 	if err != nil {
 		return err
 	}
-	return writeNewFile(filepath.Join(path, "manifest.json"), data)
+	if err := writeNewFile(filepath.Join(path, "manifest.json"), data); err != nil {
+		return err
+	}
+	return writeNewFile(filepath.Join(path, "analysis-summary.md"), []byte(analysisSummaryHeader(info.ID)))
 }
 
 func (runtime *Runtime) saveEvidence(sessionID, tool, command, output, status, executionError string, truncated bool, started time.Time) (string, error) {

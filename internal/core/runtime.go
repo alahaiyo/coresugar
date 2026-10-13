@@ -49,6 +49,7 @@ type session struct {
 
 type Runtime struct {
 	config     Config
+	logMu      sync.Mutex
 	mu         sync.Mutex
 	sessions   map[string]*session
 	ctx        context.Context

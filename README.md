@@ -110,12 +110,14 @@ vmlinux：/data/case-001/vmlinux
 
 先核对输入，再分析日志、异常调用栈、寄存器、故障指令和相关源码。
 关键结论必须引用实际 evidence_id，区分直接原因、根因判断和未确认的信息。
+每完成一个调查阶段，调用 record_analysis_step，记录做了什么、发现了什么和未确认的问题。
+结束前再记录本轮结果与停止原因，程序会保存 analysis-summary.md。
 最终将报告写入 analysis-report.md，并关闭调试会话。
 ```
 
 首次使用可以先要求 Agent 只完成 `open_dump → crash_exec("sys") → close_dump`。
 确认界面中出现真实工具调用和返回值后，再执行完整分析。
-可用的七个 Tool 及输出限制见下方说明。
+可用的 Tool 及输出限制见下方说明。
 
 ## 远程使用：Agent 在本机，资料在 Linux 服务器
 
@@ -165,7 +167,7 @@ scp debug@debug-server:/home/debug/coresugar/skills/coresugar-analysis/SKILL.md 
 
 ## 当前验证范围
 
-已验证真实 Linux 资料、七个 MCP Tool、SSH 调用、证据保存和会话生命周期。
+已验证真实 Linux 资料、八个 MCP Tool、SSH 调用、证据保存、调查总结和会话生命周期。
 已有分析报告由 Codex 会话读取测试客户端获取的证据并撰写。
 独立 Codex/Claude Code 直接接入 MCP、自主完成多轮分析的端到端验收，以及五个已知原因案例评测仍待完成。
 
@@ -230,12 +232,58 @@ macOS 可用于开发和单元测试，crash 的环境检查与实际运行需�
 未指定配置时采用默认值；配置文件覆盖默认值，显式 CLI 参数覆盖相应配置。
 配置允许目录应明确包含 vmcore、vmlinux 和源码的位置。
 
-七个 Tool：open_dump、crash_exec、get_session、close_dump、get_evidence、read_source、search_source。
+八个 Tool：open_dump、crash_exec、get_session、close_dump、get_evidence、read_source、search_source、record_analysis_step。
 默认最多两个活动会话，同会话并发请求返回 BUSY，不同会话可并行。
 空闲会话关闭后，其内存状态会过期；证据保存在磁盘，可在服务重启后继续查询。
 
 MCP stdout 只输出协议，诊断写入 stderr。SSH 客户端示例见 [mcp.example.json](configs/mcp.example.json)。
 测试机已验证免交互 SSH 登录，密码不写入配置或日志。
+
+### 调查过程总结
+
+每次打开 vmcore，程序在 `<evidence_dir>/<session_id>/analysis-summary.md` 创建调查总结。
+Agent 每完成一个阶段调用 `record_analysis_step`，提交标题、通俗说明和可选证据编号，
+程序自动按编号追加成 Markdown。例如：
+
+1. **查看调用栈和寄存器**
+
+   执行 bt，定位到 transfer_surpluses+878，发现 RCX 为 0。调用路径涉及 io.cost 定时器。
+
+2. **检查实际执行的指令**
+
+   执行 dis，确认故障指令是 div %rcx，可以确认直接原因是除零；零值形成原因尚未查清。
+
+最后一条总结应说明本轮结果、停止原因和未执行的调查，方便判断是否需要调整程序。
+分析说明和上面的提示要求 Agent 逐阶段提交；如果 Agent 未调用此接口，文件只有初始说明。
+服务端负责保存和排版，并校验证据编号，具体调查发现由使用工具的 Agent 总结。
+标题最多 512 字节、单条正文最多 16 KiB、证据编号最多 32 个，总文件上限 1 MiB。
+会话关闭或服务重启后仍可追加；文件保存在 Linux 服务器，可下载到本机阅读。
+
+### 原始操作日志
+
+`serve` 默认记录所有 MCP 工具调用，无需 Agent 手工写日志或增加配置：
+
+- 总日志：`<evidence_dir>/operations.jsonl`，包含打开会话失败、参数错误和未知工具请求。
+- 每次分析的会话日志：`<evidence_dir>/<session_id>/operations.jsonl`。
+
+每行是一条 JSON 记录，包含 UTC 时间、调用编号 `call_id`、客户端名称、工具名、
+会话编号和参数。一次调用分为 `started` 与 `finished` 两条记录；结束记录还包含
+耗时、成功/失败、错误及结果元信息（证据编号、会话状态、输出截断等）。
+可按 `call_id` 配对，并通过证据编号查看完整命令输出；大段输出不重复写入操作日志。
+
+`open_dump` 开始时尚无会话编号，所以开始记录只写入总日志，成功结果写入会话日志。
+日志追加保存，关闭会话、服务重启后仍可读取；重启后的证据查询也会继续追加。
+如果进程中断，可能只留下 `started`，这不能直接证明操作未执行。
+日志写入失败会向 stderr 输出 `OPERATION_LOG_WRITE_FAILED`，原工具响应保持原样。
+
+例如，在保存证据的 Linux 服务器查看某次分析：
+
+```bash
+cat /data/coresugar-evidence/cs-实际会话编号/operations.jsonl
+```
+
+日志记录通过 coresugar MCP 实际执行的操作。Agent 自身的判断、未调用的操作，
+以及在其他终端直接执行的命令，服务端无法观察；它不会自动判断根因或决定停止分析。
 
 ### 测试环境配置
 

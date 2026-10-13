@@ -1,7 +1,11 @@
 package mcpserver
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -41,10 +45,20 @@ func TestServer(t *testing.T) {
 		t.Errorf("list tools: %v", err)
 		return
 	}
-	if len(list.Tools) != 7 {
+	if len(list.Tools) != 8 {
 		t.Errorf("tool count = %d", len(list.Tools))
 	}
-	for _, request := range []mcp.CallToolParams{{Name: "get_session", Arguments: map[string]any{"session_id": "cs-not-found"}}, {Name: "crash_exec", Arguments: map[string]any{"session_id": "cs-not-found", "command": "!id"}}} {
+	requests := []mcp.CallToolParams{
+		{Name: "get_session", Arguments: map[string]any{"session_id": "cs-not-found"}},
+		{Name: "crash_exec", Arguments: map[string]any{"session_id": "cs-not-found", "command": "!id"}},
+		{Name: "close_dump", Arguments: map[string]any{"session_id": "cs-not-found"}},
+		{Name: "open_dump", Arguments: core.Inputs{VMCore: "/not-allowed/vmcore", VMLinux: "/not-allowed/vmlinux", SourceDir: "/not-allowed/source"}},
+		{Name: "get_evidence", Arguments: core.EvidenceRequest{SessionID: "cs-not-found", EvidenceID: "ev-not-found"}},
+		{Name: "read_source", Arguments: core.SourceRequest{SessionID: "cs-not-found", File: "kernel/sched/core.c", StartLine: 1, EndLine: 10}},
+		{Name: "search_source", Arguments: core.SearchRequest{SessionID: "cs-not-found", Pattern: "io_schedule"}},
+		{Name: "record_analysis_step", Arguments: core.AnalysisStepRequest{SessionID: "cs-not-found", Title: "查看调用栈", Summary: "读取 bt。"}},
+	}
+	for _, request := range requests {
 		result, err := clientSession.CallTool(ctx, &request)
 		if err != nil {
 			t.Errorf("tool call protocol error: %v", err)
@@ -59,5 +73,27 @@ func TestServer(t *testing.T) {
 	}
 	if _, err := clientSession.ListTools(ctx, nil); err != nil {
 		t.Errorf("business error broke connection: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(config.EvidenceDir, "operations.jsonl"))
+	if err != nil {
+		t.Errorf("operation log: %v", err)
+		return
+	}
+	lines := bytes.Split(bytes.TrimSpace(data), []byte{'\n'})
+	if len(lines) != (len(requests)+1)*2 {
+		t.Errorf("unexpected log line count: %d", len(lines))
+	}
+	for _, line := range lines {
+		var record core.OperationRecord
+		if err := json.Unmarshal(line, &record); err != nil {
+			t.Errorf("invalid log: %v", err)
+			continue
+		}
+		if record.Phase == "finished" && (record.Status != "ERROR" || record.Error == "") {
+			t.Errorf("failure not recorded: %+v", record)
+		}
+		if record.CallID == "" || record.Client != "coresugar-test" || record.Timestamp.IsZero() {
+			t.Errorf("call identity absent: %+v", record)
+		}
 	}
 }

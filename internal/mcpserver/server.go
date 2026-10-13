@@ -13,7 +13,8 @@ type SessionRequest struct {
 
 func New(runtime *core.Runtime) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "coresugar", Version: "0.1.0"}, nil)
-	mcp.AddTool(server, &mcp.Tool{Name: "open_dump", Description: "Validate explicit input paths and open a persistent crash session."}, func(ctx context.Context, _ *mcp.CallToolRequest, input core.Inputs) (*mcp.CallToolResult, core.SessionInfo, error) {
+	server.AddReceivingMiddleware(operationLogging(runtime))
+	mcp.AddTool(server, &mcp.Tool{Name: "open_dump", Description: "Validate input paths and open a persistent crash session. Creates analysis-summary.md; call record_analysis_step after each investigation stage to save readable findings."}, func(ctx context.Context, _ *mcp.CallToolRequest, input core.Inputs) (*mcp.CallToolResult, core.SessionInfo, error) {
 		result, err := runtime.Open(ctx, input)
 		return nil, result, err
 	})
@@ -28,7 +29,7 @@ func New(runtime *core.Runtime) *mcp.Server {
 		result, err := runtime.Get(input.SessionID)
 		return nil, result, err
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "close_dump", Description: "Close a crash session and release its child process."}, func(_ context.Context, _ *mcp.CallToolRequest, input SessionRequest) (*mcp.CallToolResult, core.SessionInfo, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "close_dump", Description: "Close a crash session and release its child process. First record the outcome, unresolved questions and stopping reason with record_analysis_step."}, func(_ context.Context, _ *mcp.CallToolRequest, input SessionRequest) (*mcp.CallToolResult, core.SessionInfo, error) {
 		result, err := runtime.CloseSession(input.SessionID)
 		return nil, result, err
 	})
@@ -42,6 +43,10 @@ func New(runtime *core.Runtime) *mcp.Server {
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "search_source", Description: "Search literal text under the session source root with result, scan and time limits."}, func(ctx context.Context, _ *mcp.CallToolRequest, input core.SearchRequest) (*mcp.CallToolResult, core.SearchResult, error) {
 		result, err := runtime.SearchSource(ctx, input)
+		return nil, result, err
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "record_analysis_step", Description: "Append a numbered, readable investigation summary to analysis-summary.md. Supply a short title, what you did, findings and uncertainty, and optional real evidence IDs. Call after each investigation stage and record the stopping reason before finishing. Available after closure or restart."}, func(_ context.Context, _ *mcp.CallToolRequest, input core.AnalysisStepRequest) (*mcp.CallToolResult, core.AnalysisStepResult, error) {
+		result, err := runtime.RecordAnalysisStep(input)
 		return nil, result, err
 	})
 	return server
