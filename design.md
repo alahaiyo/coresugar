@@ -1575,23 +1575,33 @@ L3 主要由 AI Agent 负责。
 
 ## 9.3 证据目录
 
-建议：
+服务端日志和证据按配置的 `evidence_dir` 保存，每次成功打开 vmcore 使用独立会话目录：
 
 ```text
-evidence/
-│
-├── manifest.json
-│
-├── commands.jsonl
-│
-├── outputs/
-│   ├── cmd-0001.txt
-│   ├── cmd-0002.txt
-│   └── cmd-0003.txt
-│
-└── reports/
-    └── analysis.md
+<evidence_dir>/
+├── operations.jsonl
+└── <session_id>/
+    ├── manifest.json
+    ├── operations.jsonl
+    ├── commands.jsonl
+    ├── ev-*.txt
+    ├── ev-*.json
+    └── analysis-summary.md
 ```
+
+调查过程总结和最终报告固定由 Agent 保存到本机当前工作目录下新建的时间戳目录：
+
+```text
+coresugar-analysis-20261014-153000/
+├── analysis-summary.md
+└── analysis-report.md
+```
+
+目录名为 `coresugar-analysis-YYYYMMDD-HHMMSS`，使用本机分析开始时间；重名时依次
+追加 `-1`、`-2` 等编号，不覆盖已有产物。同一轮分析重新打开会话仍沿用原本机目录。
+Agent 每阶段调用 `record_analysis_step` 保存服务端记录，同时将相同内容追加到本机
+总结并标明会话和证据编号；服务端提交失败时在本机记录实际错误。结束时保存最终报告，
+提供两个本机文件的绝对路径链接。服务端日志和原始证据继续由 `evidence_dir` 管理。
 
 其中：
 

@@ -110,9 +110,12 @@ vmlinux：/data/case-001/vmlinux
 
 先核对输入，再分析日志、异常调用栈、寄存器、故障指令和相关源码。
 关键结论必须引用实际 evidence_id，区分直接原因、根因判断和未确认的信息。
-每完成一个调查阶段，调用 record_analysis_step，记录做了什么、发现了什么和未确认的问题。
-结束前再记录本轮结果与停止原因，程序会保存 analysis-summary.md。
-最终将报告写入 analysis-report.md，并关闭调试会话。
+开始分析前，在 Agent 本机当前工作目录创建 coresugar-analysis-YYYYMMDD-HHMMSS/，
+使用本机时间；目录重名时追加编号，重新打开会话仍沿用本轮目录。
+每完成一个调查阶段，调用 record_analysis_step，并将相同内容追加到本轮目录的
+analysis-summary.md，记录做了什么、发现了什么和未确认的问题，以及会话和证据编号。
+结束前再记录本轮结果与停止原因，将最终报告写入同一目录的 analysis-report.md，
+关闭调试会话，并提供两个本机文件的绝对路径链接。
 ```
 
 首次使用可以先要求 Agent 只完成 `open_dump → crash_exec("sys") → close_dump`。
@@ -163,7 +166,8 @@ scp debug@debug-server:/home/debug/coresugar/skills/coresugar-analysis/SKILL.md 
 ```
 
 提示 Agent 先读取 `./coresugar-analysis.md`，再按前面的分析提示操作。
-输入文件路径始终使用 Linux 服务器上的路径，报告可写入 Agent 的本机工作目录；vmcore 无需传到本机，Agent 获取的是调试命令输出。
+输入文件路径始终使用 Linux 服务器上的路径；调查总结和最终报告固定写入 Agent 本机
+工作目录下本轮新建的时间戳目录。vmcore 无需传到本机，Agent 获取的是调试命令输出。
 
 ## 当前验证范围
 
@@ -246,9 +250,22 @@ macOS 可用于开发和单元测试，crash 的环境检查与实际运行需�
 MCP stdout 只输出协议，诊断写入 stderr。SSH 客户端示例见 [mcp.example.json](configs/mcp.example.json)。
 测试机已验证免交互 SSH 登录，密码不写入配置或日志。
 
-### 调查过程总结
+### 本机报告和调查过程总结
 
-每次打开 vmcore，程序在 `<evidence_dir>/<session_id>/analysis-summary.md` 创建调查总结。
+每轮分析开始前，Agent 在本机当前工作目录新建产物目录，统一保存调查总结和最终报告：
+
+```text
+coresugar-analysis-20261014-153000/
+├── analysis-summary.md
+└── analysis-report.md
+```
+
+目录名使用本机开始时间，格式为 `coresugar-analysis-YYYYMMDD-HHMMSS`；重名时依次追加
+`-1`、`-2` 等编号，避免覆盖。确定绝对路径后，本轮切换工作目录或重新打开会话都沿用
+该目录。本机总结记录开始时间、时区、输入路径及各阶段的会话和证据编号，由 Agent
+逐阶段维护；服务端无法直接写入本机目录。具体要求见 [分析 Skill](skills/coresugar-analysis/SKILL.md)。
+
+每次打开 vmcore，程序还会在 `<evidence_dir>/<session_id>/analysis-summary.md` 创建会话总结。
 Agent 每完成一个阶段调用 `record_analysis_step`，提交标题、通俗说明和可选证据编号，
 程序自动按编号追加成 Markdown。例如：
 
@@ -261,10 +278,12 @@ Agent 每完成一个阶段调用 `record_analysis_step`，提交标题、通俗
    执行 dis，确认故障指令是 div %rcx，可以确认直接原因是除零；零值形成原因尚未查清。
 
 最后一条总结应说明本轮结果、停止原因和未执行的调查，方便判断是否需要调整程序。
-分析说明和上面的提示要求 Agent 逐阶段提交；如果 Agent 未调用此接口，文件只有初始说明。
+分析说明和上面的提示要求 Agent 逐阶段提交，并将相同内容追加到本机总结；提交失败时
+仍保存本机记录并注明错误。如果 Agent 未调用此接口，服务端总结只有初始说明。
 服务端负责保存和排版，并校验证据编号，具体调查发现由使用工具的 Agent 总结。
 标题最多 512 字节、单条正文最多 16 KiB、证据编号最多 32 个，总文件上限 1 MiB。
-会话关闭或服务重启后仍可追加；文件保存在 Linux 服务器，可下载到本机阅读。
+会话关闭或服务重启后仍可追加；服务端副本保存在运行 coresugar 的服务器，本机产物
+按上述固定目录保存。最终报告由 Agent 撰写，结束时应提供两个本机文件的绝对路径链接。
 
 ### 原始操作日志
 
